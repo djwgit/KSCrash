@@ -34,6 +34,11 @@
 #import "KSReachabilityKSCrash.h"
 #import "NSError+SimpleConstructor.h"
 
+#import "KSCrashReportFilterAppleFmt.h"
+#import "KSCrashReportFilterBasic.h"
+#import "KSSystemCapabilities.h"
+
+
 //#define KSLogger_LocalLevel TRACE
 #import "KSLogger.h"
 
@@ -67,11 +72,17 @@
     return self;
 }
 
+
 - (id <KSCrashReportFilter>) defaultCrashReportFilterSet
 {
-    return self;
+//    return self;
+    return [KSCrashReportFilterPipeline filterWithFilters:
+            [KSCrashReportFilterAppleFmt filterWithReportStyle:KSAppleReportStyleSymbolicatedSideBySide],
+            self,
+            nil];
 }
 
+// if no crash log found, this func would not get called
 - (void) filterReports:(NSArray*) reports
           onCompletion:(KSCrashReportFilterCompletion) onCompletion
 {
@@ -80,33 +91,27 @@
                                                            cachePolicy:NSURLRequestReloadIgnoringLocalCacheData
                                                        timeoutInterval:15];
     KSHTTPMultipartPostBody* body = [KSHTTPMultipartPostBody body];
-    NSData* jsonData = [KSJSONCodec encode:reports
-                                   options:KSJSONEncodeOptionSorted
-                                     error:&error];
-    if(jsonData == nil)
-    {
-        kscrash_callCompletion(onCompletion, reports, NO, error);
-        return;
-    }
 
-    [body appendData:jsonData
-                name:@"reports"
-         contentType:@"application/json"
-            filename:@"reports.json"];
-    // TODO: Disabled gzip compression until support is added server side,
-    // and I've fixed a bug in appendUTF8String.
-//    [body appendUTF8String:@"json"
-//                      name:@"encoding"
-//               contentType:@"string"
-//                  filename:nil];
+    // add each log to the request data
+    for(NSString* report in reports)
+    {
+        NSData* textData = [report dataUsingEncoding:NSUTF8StringEncoding];
+
+        if(textData == nil)
+        {
+            continue;
+        }
+
+        [body appendData:textData
+                    name:@"logfile"
+             contentType:@"text/plain"   // application/octet-stream
+                filename:@"crash.log"];
+    }
 
     request.HTTPMethod = @"POST";
     request.HTTPBody = [body data];
     [request setValue:body.contentType forHTTPHeaderField:@"Content-Type"];
     [request setValue:@"KSCrashReporter" forHTTPHeaderField:@"User-Agent"];
-
-//    [request setHTTPBody:[[body data] gzippedWithError:nil]];
-//    [request setValue:@"gzip" forHTTPHeaderField:@"Content-Encoding"];
 
     self.reachableOperation = [KSReachableOperationKSCrash operationWithHost:[self.url host]
                                                                    allowWWAN:YES
